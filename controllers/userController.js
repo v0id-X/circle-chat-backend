@@ -8,10 +8,10 @@ import 'dotenv/config'
 
 //Signup
 export const signup =  async (req,res)=>{
-    const {fullName,email,password,bio} = req.body ;
+    const {fullName,email,password,bio,publicKey,encryptedPrivateKey,salt,nonce} = req.body ;
 
     try{
-        if(!fullName || !email || !password || !bio){
+        if(!fullName || !email || !password || !bio || !publicKey || !encryptedPrivateKey || !salt ||!nonce){
         return res.json({success: false, message: "Missing Credentials"})
     }
 
@@ -21,16 +21,19 @@ export const signup =  async (req,res)=>{
          return res.json({success:false,message: "Email already in use!"})
     }
 
-    const salt = await bcrypt.genSalt(10);
-    const hashedPasswowrd = await bcrypt.hash(password,salt)
+    const bcryptSalt = await bcrypt.genSalt(10);
+    const hashedPasswowrd = await bcrypt.hash(password,bcryptSalt)
     
     const newUser = await User.create({
-        fullName,email,password:hashedPasswowrd,bio
+        fullName,email,password:hashedPasswowrd,bio,publicKey,encryptedPrivateKey,salt,nonce
     })
 
     const token = genrateToken(newUser._id)
 
-     return res.json({success: true, userData: newUser, token, message: "Account created successfully!"})
+    const userResponse = newUser.toObject()
+    delete userResponse.password
+
+     return res.json({success: true, userData: userResponse, token, message: "Account created successfully!"})
 
     }catch(error){
         console.log(error.message)
@@ -55,7 +58,10 @@ export const login = async (req,res)=>{
 
         const token = genrateToken(userData._id)
 
-        return res.json({success:true,message:"Login Successful",token,userData})
+        const userResponse = userData.toObject()
+        delete userResponse.password
+
+        return res.json({success:true,message:"Login Successful",token,userData:userResponse})
 
     } catch (error) {
         console.log(error.message)

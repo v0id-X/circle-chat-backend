@@ -24,7 +24,20 @@ const userSchema = new mongoose.Schema({
     },
     publicKey: {
         type: String,
+        required: true,
         default: ""
+    },
+    encryptedPrivateKey: {
+        type: String,
+        required: true
+    },
+    salt: {
+        type: String,
+        required: true,
+    },
+    nonce: {
+        type: String,
+        required: true,
     }
 }, {timestamps: true})
 
