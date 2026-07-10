@@ -2,6 +2,7 @@ import express from 'express'
 import 'dotenv/config'
 import cors from 'cors'
 import http from 'http'
+import jwt from 'jsonwebtoken'
 import { connectDB } from './db/db.js'
 import userRouter from './routes/userRoutes.js'
 import messageRouter from './routes/messageRoutes.js'
@@ -13,35 +14,50 @@ const server = http.createServer(app)
 
 const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173"
 
-//Init socket.io server
 export const io = new Server(server, {
     cors: {origin: frontendUrl, 
     credentials: true}
 })
 
-//store currently online users
+
+io.use((socket, next) => {
+    try {
+        const token = socket.handshake.auth?.token;
+        if (!token) {
+            return next(new Error("Authentication required"));
+        }
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        socket.userId = decoded.uid;
+        next();
+    } catch (error) {
+        next(new Error("Authentication failed"));
+    }
+});
+
+
 export const userSocketMap ={}
 
-//socket.io connection handler
+
 io.on("connection",(socket)=>{
-    const userId = socket.handshake.query.userId
+    
+    const userId = socket.userId
 
     if(userId) userSocketMap[userId] = socket.id
 
-    //Emitting online users to all other connected clients
     io.emit("getOnlineUsers",Object.keys(userSocketMap))
 
-    socket.on("Typing",({senderId,receiverId})=>{
+    socket.on("Typing",({receiverId})=>{
+
         const receiverSocketId = userSocketMap[receiverId]
         if(receiverSocketId){
-            io.to(receiverSocketId).emit("Typing",{senderId})
+            io.to(receiverSocketId).emit("Typing",{senderId: userId})
         }
     })
 
-    socket.on("StoppedTyping",({senderId,receiverId})=>{
+    socket.on("StoppedTyping",({receiverId})=>{
         const receiverSocketId = userSocketMap[receiverId]
         if(receiverSocketId){
-            io.to(receiverSocketId).emit("StoppedTyping",{senderId})
+            io.to(receiverSocketId).emit("StoppedTyping",{senderId: userId})
         }
     })
 
@@ -64,7 +80,7 @@ app.get('/ping', (req, res) => {
     res.status(200).json({ message: "Server is awake" });
 });
 
-//Routes setup
+
 app.use("/api/status",(req,res)=>res.send("Server Running"))
 app.use("/api/auth",userRouter)
 app.use("/api/messages",messageRouter)

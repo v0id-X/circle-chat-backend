@@ -6,7 +6,6 @@ import cloudinary from "../lib/cloudinary.js";
 import 'dotenv/config'
 
 
-//Signup
 export const signup =  async (req,res)=>{
     const {fullName,email,password,bio,publicKey,encryptedPrivateKey,salt,nonce} = req.body ;
 
@@ -42,11 +41,15 @@ export const signup =  async (req,res)=>{
     
 }
 
-//Login
+
 export const login = async (req,res)=>{
     try {
         const {email,password} = req.body
         const userData = await User.findOne({email})
+
+        if(!userData){
+           return res.json({success:false,message:"Incorrect Password!"})
+        }
 
         const isPasswordCorrect = await bcrypt.compare(password,userData.password);
 
@@ -69,7 +72,7 @@ export const login = async (req,res)=>{
     }
 } 
 
-// checking user authentication
+
 export const checkAuth = (req,res)=>{
     return res.json({success:true,user: req.user})
 }
@@ -90,7 +93,6 @@ export const updatePublicKey = async (req,res) =>{
 }
 
 
-//get public key for a certain user
 export const getPublicKey = async(req,res)=>{
     try{
         const {targetUserId} = req.params
@@ -113,7 +115,7 @@ export const getPublicKey = async(req,res)=>{
     }
 }
 
-//updating profile
+
 export const updateProfile = async (req,res)=>{
     try {
          const {profilePic,bio,fullName} = req.body

@@ -3,26 +3,49 @@ import Message from "../models/Message.js"
 import User from "../models/User.js"
 import { userSocketMap,io } from "../server.js"
 import cloudinary from "../lib/cloudinary.js"
+import { Readable } from "stream"
 
-//Get all users except the logged in user
+const uploadRawBuffer = (buffer) => {
+    return new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+            { resource_type: "raw", folder: "encrypted_messages" },
+            (error, result) => error ? reject(error) : resolve(result)
+        );
+        Readable.from(buffer).pipe(uploadStream);
+    });
+};
+
 export const getUsersForSidebar = async (req,res)=>{
     try {
         const uid = req.user._id
-        const filteredUsers = await User.find({_id: {$ne:uid}}).select("-password")
+        const cursor = req.query.cursor;
+        const limit = 30;
 
-        //get no. of messeages not seen yet
-        const unseenMessages = {}
-        const promises = filteredUsers.map(async (user)=>{
-            const messages = await Message.find({senderId: user._id , receiverId: uid, seen: false})
-            if(messages.length>0){
-                unseenMessages[user._id] = messages.length
-            }
+        let userQuery = { _id: { $ne: uid } };
+        if (cursor) {
+            userQuery._id = { $ne: uid, $gt: cursor };
+        }
 
-        })  
+        const filteredUsers = await User.find(userQuery)
+            .select("-password")
+            .sort({ _id: 1 })
+            .limit(limit);
 
-            await Promise.all(promises)
+        const unseenCounts = await Message.aggregate([
+            { $match: { receiverId: uid, seen: false } },
+            { $group: { _id: "$senderId", count: { $sum: 1 } } }
+        ]);
 
-            return res.json({success: true, users: filteredUsers, unseenMessages})
+        const unseenMessages = {};
+        unseenCounts.forEach(row => {
+            unseenMessages[row._id.toString()] = row.count;
+        });
+
+        const nextCursor = filteredUsers.length === limit
+            ? filteredUsers[filteredUsers.length - 1]._id
+            : null;
+
+        return res.json({ success: true, users: filteredUsers, unseenMessages, nextCursor })
             
     } catch (error) {
         console.log(error.message)
@@ -30,7 +53,6 @@ export const getUsersForSidebar = async (req,res)=>{
     }
 }
 
-//Get all messages for a selected user
 export const getMessages = async(req,res) =>{
     try {
         const {id: selectedUserId} = req.params
@@ -71,7 +93,13 @@ export const getMessages = async(req,res) =>{
 export const markMessageSeen = async(req,res)=>{
     try {
         const {id} = req.params
-        await Message.findByIdAndUpdate(id,{seen: true})
+        const updated = await Message.findOneAndUpdate(
+            { _id: id, receiverId: req.user._id },
+            { seen: true }
+        )
+        if(!updated){
+            return res.status(403).json({success:false, message:"Not authorized to update this message"})
+        }
          return res.json({success:true})
     } catch (error) {
         console.log(error.message)
@@ -88,13 +116,7 @@ export const markMessageSeen = async(req,res)=>{
 
         let imageUrl
         if(image){
-
-            const b64 = Buffer.from(image).toString('base64')
-            const uploadPayload = `data:text/plain;base64,${b64}`
-            const uploadResponse = await cloudinary.uploader.upload(uploadPayload,{
-                resource_type: "raw",
-                folder: "encrypted_messages"
-            })
+            const uploadResponse = await uploadRawBuffer(Buffer.from(image, 'utf-8'))
             imageUrl = uploadResponse.secure_url
         }
 
@@ -106,7 +128,6 @@ export const markMessageSeen = async(req,res)=>{
             nonce,
         })
 
-        //Emitting new message to receiver's socket
         const receiverSocketId = userSocketMap[receiverId]
         if(receiverSocketId){
             io.to(receiverSocketId).emit("newMessage",newMessage)
