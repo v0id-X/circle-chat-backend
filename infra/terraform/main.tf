@@ -119,7 +119,7 @@ resource "azurerm_linux_virtual_machine" "circlechat" {
 
   admin_ssh_key {
     username   = "rachit"
-    public_key = file("C:/Users/Rachit/.ssh/circlechat-vm-key.pub")
+    public_key = var.ssh_public_key
   }
 
   os_disk {

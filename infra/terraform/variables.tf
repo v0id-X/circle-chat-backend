@@ -15,3 +15,9 @@ variable "location" {
   type        = string
   default     = "centralindia"
 }
+
+variable "ssh_public_key" {
+  description = "SSH public key used for VM access"
+  type        = string
+  sensitive   = true
+}

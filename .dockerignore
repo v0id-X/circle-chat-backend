@@ -5,4 +5,7 @@ npm-debug.log
 .github
 Dockerfile
 .dockerignore
+README.md
 readme.md
+coverage
+dist
