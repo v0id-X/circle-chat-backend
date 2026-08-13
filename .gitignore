@@ -13,16 +13,23 @@ node_modules/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.*.local
+
 *.pem
+*.key
+*.crt
+*.p12
+*.pfx
 
 # ========================
 # Logs
 # ========================
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 lerna-debug.log*
 
 # ========================
@@ -39,7 +46,7 @@ temp/
 # Testing & Coverage
 # ========================
 coverage/
-.nyc_output
+.nyc_output/
 
 # ========================
 # OS Generated Files
@@ -61,6 +68,39 @@ Thumbs.db
 *.swo
 
 # ========================
-# PM2 (Process Manager)
+# PM2
 # ========================
 .pm2/
+
+# ========================
+# Terraform
+# ========================
+**/.terraform/
+**/terraform.tfvars
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/crash.log
+**/crash.*.log
+
+# ========================
+# Terraform Override Files
+# ========================
+**/override.tf
+**/override.tf.json
+**/*_override.tf
+**/*_override.tf.json
+
+# ========================
+# Terraform CLI Config
+# ========================
+.terraformrc
+terraform.rc
+
+# ========================
+# Miscellaneous
+# ========================
+*.tmp
+*.temp
+*.bak
+*.swp

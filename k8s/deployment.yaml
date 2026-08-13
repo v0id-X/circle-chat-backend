@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: circlechat-backend
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: circlechat-backend
+
+  template:
+    metadata:
+      labels:
+        app: circlechat-backend
+
+    spec:
+      imagePullSecrets:
+        - name: ghcr-secret
+
+      containers:
+        - name: backend
+
+          image: ghcr.io/v0id-x/circle-chat-backend:latest
+
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8000
+
+          envFrom:
+            - secretRef:
+                name: circlechat-env
+
+          env:
+            - name: PORT
+              value: "8000"
