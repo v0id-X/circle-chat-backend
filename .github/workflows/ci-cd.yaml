@@ -49,10 +49,22 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/circlechat-vm-key
           chmod 600 ~/.ssh/circlechat-vm-key
-          ssh-keyscan -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -T 10 -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Verify SSH
+        run: |
+          ssh \
+            -i ~/.ssh/circlechat-vm-key \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=10 \
+            "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" \
+            "echo SSH connection successful"
 
       - name: Deploy to Kubernetes
         run: |
-          ssh -i ~/.ssh/circlechat-vm-key \
+          ssh \
+            -i ~/.ssh/circlechat-vm-key \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=10 \
             "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" \
             "sudo kubectl set image deployment/circlechat-backend backend=$IMAGE_NAME:${{ github.sha }} && sudo kubectl rollout status deployment/circlechat-backend --timeout=180s"
