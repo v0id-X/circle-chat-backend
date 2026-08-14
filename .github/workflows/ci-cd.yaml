@@ -38,3 +38,21 @@ jobs:
         run: |
           docker push $IMAGE_NAME:${{ github.sha }}
           docker push $IMAGE_NAME:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/circlechat-vm-key
+          chmod 600 ~/.ssh/circlechat-vm-key
+          ssh-keyscan -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy to Kubernetes
+        run: |
+          ssh -i ~/.ssh/circlechat-vm-key \
+            "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" \
+            "sudo kubectl set image deployment/circlechat-backend backend=$IMAGE_NAME:${{ github.sha }} && sudo kubectl rollout status deployment/circlechat-backend --timeout=180s"
