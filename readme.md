@@ -13,62 +13,213 @@ Circle Chat provides:
 - JWT-based authentication
 - Client-side End-to-End Encryption
 - Real-time encrypted messaging with Socket.IO
-- Online user presence
-- Typing indicators
+- Online presence and typing indicators
 - Cursor-based message pagination
 - Encrypted media handling through Cloudinary
 - MongoDB Atlas persistence
 - Dockerized backend
 - Terraform-managed Azure infrastructure
-- Kubernetes deployment using K3s
-- Traefik-based HTTPS ingress
-- Let's Encrypt TLS certificates
-- Production WebSocket support over WSS
+- Kubernetes/K3s deployment history
+- Production deployment on Azure App Service
+- GitHub Actions CI/CD with GHCR
+- Microsoft Entra ID GitHub OIDC federation
+- Production WebSocket support
 
 ---
 
-## Production Architecture
+## Current Production Architecture
 
+The backend currently runs on **Azure App Service**. The earlier K3s deployment is retained below as the legacy architecture and explains the infrastructure migration.
+
+```text
+                         ┌──────────────────────┐
+                         │    React Frontend    │
+                         │        Vercel        │
+                         └──────────┬───────────┘
+                                    │
+                               HTTPS / WSS
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │   Azure App Service  │
+                         │  Linux Web App       │
+                         │  Node.js + Express   │
+                         │     Port 8000        │
+                         └──────────┬───────────┘
+                                    │
+                         ┌──────────┴───────────┐
+                         ▼                      ▼
+                ┌─────────────────┐    ┌─────────────────┐
+                │  MongoDB Atlas  │    │    Cloudinary   │
+                │ Application Data│    │ Encrypted Media │
+                └─────────────────┘    └─────────────────┘
 ```
-                         ┌─────────────────────────┐
-                         │      React Frontend     │
-                         │        Vercel           │
-                         └────────────┬────────────┘
-                                      │
-                         HTTPS / WSS  │
-                                      ▼
-                         ┌─────────────────────────┐
-                         │      Azure Public IP    │
-                         │      20.197.24.9         │
-                         └────────────┬────────────┘
-                                      │
-                                      ▼
-                         ┌─────────────────────────┐
-                         │    Traefik Ingress       │
-                         │       HTTPS/TLS          │
-                         └────────────┬────────────┘
-                                      │
-                                      ▼
-                         ┌─────────────────────────┐
-                         │        K3s Cluster       │
-                         │     Azure Linux VM       │
-                         └────────────┬────────────┘
-                                      │
-                                      ▼
-                         ┌─────────────────────────┐
-                         │   Circle Chat Backend    │
-                         │   Node.js + Express      │
-                         │      Port 8000           │
-                         └──────┬───────────┬───────┘
-                                │           │
-                     ┌──────────┘           └──────────┐
-                     ▼                                 ▼
-             ┌─────────────────┐              ┌─────────────────┐
-             │   MongoDB Atlas │              │    Cloudinary   │
-             │   Application   │              │  Media Storage  │
-             │      Data       │              │                 │
-             └─────────────────┘              └─────────────────┘
+
+The frontend connects to the backend over HTTPS and WSS. MongoDB Atlas stores application data and encrypted message payloads, while Cloudinary handles encrypted media storage.
+
+---
+
+## Legacy K3s Architecture
+
+The first production deployment ran the backend on a **1 GB Azure Linux VM** with K3s.
+
+```text
+                         ┌──────────────────────┐
+                         │    React Frontend    │
+                         │        Vercel        │
+                         └──────────┬───────────┘
+                                    │
+                               HTTPS / WSS
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │   Azure Public IP   │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │  Traefik Ingress     │
+                         │     HTTPS / TLS      │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │  K3s / Kubernetes    │
+                         │   Azure Linux VM     │
+                         │      1 GB RAM        │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ Circle Chat Backend  │
+                         │ Node.js + Express    │
+                         │      Port 8000       │
+                         └──────────┬───────────┘
+                                    │
+                         ┌──────────┴───────────┐
+                         ▼                      ▼
+                ┌─────────────────┐    ┌─────────────────┐
+                │  MongoDB Atlas  │    │    Cloudinary   │
+                └─────────────────┘    └─────────────────┘
 ```
+
+### Legacy CI/CD Pipeline
+
+The earlier deployment path used the Kubernetes environment as the application runtime:
+
+```text
+Git Push
+   │
+   ▼
+GitHub Actions
+   │
+   ├── Build Docker image
+   │
+   └── Push image
+          │
+          ▼
+        GHCR
+          │
+          ▼
+   Azure VM / K3s
+          │
+          ▼
+ Kubernetes Deployment
+          │
+          ▼
+ Circle Chat Backend
+```
+
+This worked, but it coupled application deployment to a small self-managed Kubernetes node.
+
+### Why the CI/CD and runtime changed
+
+The K3s deployment was intentionally profiled before moving away from it. The VM had only **896 MiB of RAM and 2 vCPUs**, and K3s itself accounted for roughly **474–505 MiB** during the captured measurements.
+
+The node was also using swap and showed repeated kubelet housekeeping delays and slow OpenAPI aggregation:
+
+```text
+Housekeeping took longer than expected
+expected="1s" actual="2.771s"
+
+slow openapi aggregation ... 1–2+ seconds
+```
+
+The investigation did **not** find kernel OOM-kills or Kubernetes eviction events, so the migration was not attributed to an OOM failure. The issue was the overall resource overhead of running a Kubernetes control plane, ingress, container runtime, and application on a very small VM.
+
+#### Resource investigation
+
+**Memory and swap usage**
+
+![K3s VM memory usage](docs/images/k3s-memory.png)
+
+The VM had 896 MiB of RAM with very limited available memory and approximately 595 MiB of swap in use in the captured measurement.
+
+**K3s process footprint**
+
+![K3s process memory usage](docs/images/k3s-process-memory.png)
+
+`k3s-server` was the largest process and accounted for approximately 38.5% of the VM's memory in this snapshot.
+
+**Container memory breakdown**
+
+![K3s container memory usage](docs/images/k3s-container-stats.png)
+
+The backend, Traefik, CoreDNS, and local-path-provisioner were all sharing the same constrained host.
+
+**Kubernetes workload**
+
+![K3s workloads](docs/images/k3s-pods.png)
+
+The node was running the application alongside K3s system workloads such as CoreDNS, Traefik, the service load balancer, and the local-path provisioner.
+
+**Control-plane delays**
+
+![K3s slow control-plane logs](docs/images/k3s-slow-logs.png)
+
+The logs show repeated kubelet housekeeping delays and slow OpenAPI aggregation.
+
+The result was a move to **Azure App Service**, while keeping the application containerized and the infrastructure declarative through Terraform.
+
+---
+
+## Current CI/CD Pipeline
+
+The current deployment separates the application image pipeline from Azure infrastructure management:
+
+```text
+                    ┌─────────────────────┐
+                    │      Git Push       │
+                    │        main         │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │   GitHub Actions    │
+                    └──────────┬──────────┘
+                               │
+                  ┌────────────┴────────────┐
+                  │                         │
+                  ▼                         ▼
+          Build Docker image          GitHub OIDC
+                  │                         │
+                  ▼                         ▼
+                 GHCR              Microsoft Entra ID
+                  │                         │
+                  │                         ▼
+                  │                 Federated Azure auth
+                  │                         │
+                  └────────────┬────────────┘
+                               ▼
+                    ┌─────────────────────┐
+                    │  Azure App Service  │
+                    │  Linux Web App      │
+                    └─────────────────────┘
+```
+
+Images are tagged with the **Git commit SHA** rather than relying on a mutable `latest` tag for deployment. GitHub Actions authenticates to Azure through **Microsoft Entra ID workload identity federation (OIDC)** instead of storing a long-lived Azure service-principal secret in the repository.
+
+Terraform manages the Azure App Service infrastructure separately from application releases.
 
 ---
 
@@ -91,9 +242,9 @@ The server stores:
 
 The server does not receive raw private keys or plaintext message contents.
 
-**Message Flow**
+### Message Flow
 
-```
+```text
 Sender
   │
   │ Plaintext message
@@ -118,7 +269,7 @@ Client-side decryption
 Plaintext message
 ```
 
-Private keys are unwrapped on the client using the user's credentials and are not sent to the backend in plaintext.
+Circle Chat uses libsodium's `crypto_box`, based on **X25519 public-key encryption and XSalsa20-Poly1305 authenticated encryption**. Private-key material is protected using **Argon2id**-derived key wrapping on the client.
 
 ### Authentication
 
@@ -129,11 +280,7 @@ Circle Chat uses:
 - Protected REST endpoints
 - Authenticated Socket.IO connections
 
-After successful authentication, the client receives the encrypted key material required for local cryptographic operations.
-
-Socket.IO connections authenticate using the user's JWT.
-
-```
+```text
 Client
   │
   │ JWT
@@ -149,61 +296,37 @@ Authenticated Socket
 
 ### Real-Time Communication
 
-Circle Chat uses Socket.IO for persistent real-time communication.
-
-Socket functionality includes:
+Socket.IO handles:
 
 - Real-time message delivery
-- Online user presence
+- Online presence
 - Typing indicators
 - Connection/disconnection handling
 - Authenticated socket connections
 
 Production connections use:
 
-```
+```text
 HTTPS → WSS
-```
-
-Production Socket.IO endpoint:
-
-```
-wss://circlechat-20-197-24-9.sslip.io/socket.io/
 ```
 
 ### Message Pagination
 
 Message history uses cursor-based pagination rather than offset pagination.
 
-MongoDB document IDs are used as cursors to efficiently retrieve older messages.
+MongoDB document IDs are used as cursors to retrieve older messages efficiently.
 
-**Why Cursor Pagination?**
-
-Offset pagination can become increasingly expensive as datasets grow:
-
-```
-?page=50
-?page=100
-?page=200
-```
-
-Cursor pagination instead uses the position of the last retrieved document:
-
-```
+```text
 GET /messages?cursor=<last_message_id>
 ```
 
-This provides stable pagination and avoids duplicate or skipped records when new messages are inserted.
+Cursor pagination provides stable traversal while new messages are inserted.
 
 ### Media Storage
 
-Media is stored using Cloudinary rather than directly inside MongoDB.
+Encrypted media is handled through Cloudinary.
 
-The backend handles the upload process while MongoDB stores the associated message metadata.
-
-For encrypted media:
-
-```
+```text
 Image
   ↓
 Client-side encryption
@@ -217,13 +340,13 @@ Cloudinary
 Stored media reference
 ```
 
-This keeps MongoDB focused on application data and message metadata.
+The upload path streams the encrypted data directly rather than introducing a redundant base64 re-encoding step.
 
 ---
 
 ## Technology Stack
 
-| Component | Technology |
+| Area | Technology |
 |---|---|
 | Runtime | Node.js |
 | Language | JavaScript |
@@ -233,101 +356,57 @@ This keeps MongoDB focused on application data and message metadata.
 | Real-Time | Socket.IO |
 | Authentication | JWT |
 | Password Hashing | bcryptjs |
-| Encryption | Client-side E2EE |
-| Media Storage | Cloudinary |
+| Encryption | libsodium / NaCl |
+| Key Derivation | Argon2id |
+| Public-Key Cryptography | X25519 |
+| Authenticated Encryption | XSalsa20-Poly1305 |
+| Media / CDN | Cloudinary |
 | Containerization | Docker |
-| Infrastructure as Code | Terraform |
-| Cloud Provider | Microsoft Azure |
-| Compute | Azure Linux Virtual Machine |
-| Container Orchestration | K3s / Kubernetes |
-| Ingress | Traefik |
-| TLS | Let's Encrypt |
 | Container Registry | GitHub Container Registry |
+| Infrastructure as Code | Terraform |
+| Cloud | Microsoft Azure |
+| Current Compute | Azure App Service |
+| Legacy Orchestration | Kubernetes / K3s |
+| Legacy Ingress | Traefik |
+| Legacy TLS | Let's Encrypt |
+| CI/CD | GitHub Actions |
+| Azure CI/CD Authentication | Microsoft Entra ID / GitHub OIDC |
 | Frontend Hosting | Vercel |
+| Testing | Jest |
 
 ---
 
-## Project Structure
+## Infrastructure as Code
 
-```
-server/
-│
-├── infra/
-│   └── terraform/
-│       ├── main.tf
-│       ├── providers.tf
-│       ├── variables.tf
-│       ├── terraform.tfvars.example
-│       └── .terraform.lock.hcl
-│
-├── k8s/
-│   ├── deployment.yaml
-│   └── service.yaml
-│
-├── Dockerfile
-├── .dockerignore
-├── .gitignore
-│
-├── controllers/
-├── middleware/
-├── models/
-├── routes/
-├── utils/
-├── server.js
-└── package.json
+The current Terraform configuration manages the Azure resources used by the production App Service deployment.
+
+```text
+infra/terraform/
+├── main.tf
+├── variables.tf
+├── terraform.tfvars.example
+└── .terraform.lock.hcl
 ```
 
----
+Current managed resources include:
 
-## Local Development
+- Azure Resource Group
+- Azure Linux App Service Plan
+- Azure Linux Web App
 
-### Requirements
+Terraform is intentionally separate from the application release pipeline: infrastructure changes are managed through Terraform, while container releases are handled by GitHub Actions.
 
-Install:
-
-- Node.js 20+
-- npm
-- MongoDB Atlas account
-- Cloudinary account
-
-Clone the repository:
+Basic workflow:
 
 ```bash
-git clone https://github.com/v0id-X/circle-chat-backend.git
-cd circle-chat-backend
+terraform init
+terraform fmt
+terraform validate
+terraform plan
+terraform apply
 ```
 
-Install dependencies:
-
-```bash
-npm install
-```
-
-Create a `.env` file:
-
-```env
-PORT=8000
-
-MONGODB_URI=your_mongodb_connection_string
-
-JWT_SECRET=your_jwt_secret
-
-CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
-CLOUDINARY_API_KEY=your_cloudinary_api_key
-CLOUDINARY_API_SECRET=your_cloudinary_api_secret
-```
-
-Start the development server:
-
-```bash
-npm run server
-```
-
-The backend should be available at:
-
-```
-http://localhost:8000
-```
+`terraform.tfvars` is intentionally ignored by Git and must not be committed.
 
 ---
 
@@ -341,281 +420,25 @@ Build the image:
 docker build -t circle-chat-backend .
 ```
 
-Run the container:
+The application container exposes port `8000`.
 
-```bash
-docker run -p 8000:8000 --env-file .env circle-chat-backend
-```
-
-The container exposes:
-
-```
-8000
-```
+Images used by the deployment are published to GitHub Container Registry.
 
 ---
 
-## Terraform Infrastructure
+## Kubernetes / K3s — Legacy Deployment
 
-The production VM infrastructure is managed using Terraform.
+The original Kubernetes deployment used:
 
-Terraform provisions the Azure infrastructure required to run the K3s cluster.
-
-### Infrastructure Resources
-
-The Terraform configuration manages:
-
-- Azure Resource Group
-- Virtual Network
-- Subnet
-- Network Security Group
-- Network Security Rules
-- Static Public IP
-- Network Interface
-- Linux Virtual Machine
-
-Infrastructure configuration:
-
-```
-infra/terraform/
-├── main.tf
-├── providers.tf
-├── variables.tf
-├── terraform.tfvars.example
-└── .terraform.lock.hcl
-```
-
-### Terraform Setup
-
-Navigate to the Terraform directory:
-
-```bash
-cd infra/terraform
-```
-
-Initialize Terraform:
-
-```bash
-terraform init
-```
-
-Create your local variables file:
-
-**Linux/macOS**
-```bash
-cp terraform.tfvars.example terraform.tfvars
-```
-
-**Windows PowerShell**
-```powershell
-Copy-Item terraform.tfvars.example terraform.tfvars
-```
-
-Populate the required Azure values.
-
-Format the Terraform configuration:
-
-```bash
-terraform fmt
-```
-
-Validate the configuration:
-
-```bash
-terraform validate
-```
-
-Review the infrastructure plan:
-
-```bash
-terraform plan
-```
-
-Apply the infrastructure:
-
-```bash
-terraform apply
-```
-
-> `terraform.tfvars` is intentionally ignored by Git and must not be committed.
-
----
-
-## Kubernetes / K3s Deployment
-
-The production backend runs on a K3s Kubernetes cluster hosted on an Azure Linux VM.
-
-Kubernetes manifests are located in:
-
-```
+```text
 k8s/
 ├── deployment.yaml
 └── service.yaml
 ```
 
-Apply the deployment:
+The workload was deployed to a single-node K3s cluster on the Azure VM, with Traefik providing ingress and TLS termination.
 
-```bash
-kubectl apply -f k8s/deployment.yaml
-```
-
-Apply the service:
-
-```bash
-kubectl apply -f k8s/service.yaml
-```
-
-Check the deployment:
-
-```bash
-kubectl get deployment
-```
-
-Check pods:
-
-```bash
-kubectl get pods
-```
-
-Check services:
-
-```bash
-kubectl get svc
-```
-
-For the current K3s setup, the kubeconfig may require elevated permissions:
-
-```bash
-sudo kubectl get nodes
-```
-
----
-
-## Production Ingress
-
-Traefik is used as the Kubernetes ingress controller.
-
-Production traffic flows through:
-
-```
-Internet
-   ↓
-Azure Public IP
-   ↓
-Traefik
-   ↓
-Kubernetes Service
-   ↓
-Circle Chat Backend
-```
-
-HTTPS is terminated through Traefik using Let's Encrypt.
-
-Production backend:
-
-```
-https://circlechat-20-197-24-9.sslip.io
-```
-
-Health endpoint:
-
-```
-GET /ping
-```
-
-Example:
-
-```bash
-curl https://circlechat-20-197-24-9.sslip.io/ping
-```
-
-Expected response:
-
-```json
-{
-  "message": "Server is awake"
-}
-```
-
----
-
-## Production Verification
-
-The production deployment has been verified for:
-
-- Azure VM connectivity
-- K3s node health
-- Kubernetes pod health
-- Kubernetes service routing
-- Traefik ingress
-- HTTPS
-- REST API requests
-- CORS
-- Socket.IO
-- WebSocket Secure (wss://)
-- JWT socket authentication
-- End-to-End message encryption
-- End-to-End message decryption
-- Real-time message delivery
-
-Example Kubernetes checks:
-
-```bash
-kubectl get nodes
-kubectl get pods -A
-kubectl get svc -A
-```
-
-Production Socket.IO endpoint:
-
-```
-wss://circlechat-20-197-24-9.sslip.io/socket.io/
-```
-
----
-
-## Environment Variables & Secrets
-
-The following files must not be committed:
-
-```
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-terraform.tfvars
-```
-
-Sensitive files are also ignored:
-
-```
-*.pem
-*.key
-*.crt
-*.p12
-*.pfx
-```
-
-Terraform state files are excluded:
-
-```
-*.tfstate
-*.tfstate.*
-```
-
-Use `terraform.tfvars.example` as the safe template for Terraform configuration.
-
-**Never commit:**
-
-- JWT secrets
-- MongoDB credentials
-- Cloudinary secrets
-- Azure credentials
-- SSH private keys
-- Kubernetes secrets
-- `.env` files
-- Terraform state containing sensitive values
+The K3s environment is retained in the repository as the project's **legacy deployment path** and as part of the infrastructure history. The current production runtime is Azure App Service.
 
 ---
 
@@ -623,9 +446,9 @@ Use `terraform.tfvars.example` as the safe template for Terraform configuration.
 
 Circle Chat separates authentication from message confidentiality.
 
-**Authentication** — the backend handles:
+**Authentication**
 
-```
+```text
 Identity
    ↓
 JWT Authentication
@@ -633,9 +456,9 @@ JWT Authentication
 Authorization
 ```
 
-**Message Confidentiality** — the client handles:
+**Message Confidentiality**
 
-```
+```text
 Plaintext
    ↓
 Client-side Encryption
@@ -653,34 +476,15 @@ Plaintext
 
 The backend therefore does not require access to users' raw private keys or plaintext message contents to relay messages.
 
----
+The project also includes a self-directed security audit covering:
 
-## Production Architecture (Infra View)
+- Unauthenticated WebSocket handshakes
+- JWT expiration
+- Login-flow user enumeration
+- IDOR / access-control gaps
+- N+1 MongoDB queries
 
-The current production environment consists of:
-
-```
-Vercel
-  │
-  │ HTTPS / WSS
-  ▼
-Azure Public IP
-20.197.24.9
-  │
-  ▼
-Azure Linux VM
-  │
-  ▼
-K3s
-  │
-  ├── Traefik
-  │
-  └── Circle Chat Backend
-          │
-          ├── MongoDB Atlas
-          │
-          └── Cloudinary
-```
+The N+1 query was replaced with a single MongoDB aggregation pipeline.
 
 ---
 
@@ -699,11 +503,76 @@ Real-time communication is handled through Socket.IO.
 
 Relevant implementation areas:
 
-```
+```text
 routes/
 controllers/
 middleware/
+models/
+utils/
 ```
+
+---
+
+## Environment Variables & Secrets
+
+The following files must not be committed:
+
+```text
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+terraform.tfvars
+```
+
+Sensitive files are also ignored:
+
+```text
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+```
+
+Terraform state files are excluded:
+
+```text
+*.tfstate
+*.tfstate.*
+```
+
+Never commit:
+
+- JWT secrets
+- MongoDB credentials
+- Cloudinary credentials
+- Azure credentials
+- SSH private keys
+- Kubernetes secrets
+- `.env` files
+- Terraform state containing sensitive values
+
+---
+
+## Production Verification
+
+The current deployment has been verified for:
+
+- Azure App Service connectivity
+- REST API requests
+- CORS
+- Socket.IO
+- WebSocket Secure (WSS)
+- JWT socket authentication
+- End-to-End message encryption/decryption
+- Real-time message delivery
+- MongoDB Atlas integration
+- Cloudinary integration
+- Container image deployment through GHCR
+- GitHub Actions CI/CD
+- Terraform-managed infrastructure
 
 ---
 
@@ -711,80 +580,37 @@ middleware/
 
 Feature development uses Git branches.
 
-Create a feature branch:
-
 ```bash
 git checkout -b feature/my-feature
-```
-
-Implement and test the feature.
-
-Stage changes:
-
-```bash
 git add .
-```
-
-Commit:
-
-```bash
 git commit -m "feat: add my feature"
-```
-
-Push the branch:
-
-```bash
 git push -u origin feature/my-feature
 ```
 
-Then open a Pull Request against `main`.
-
-After review and testing, merge the Pull Request.
+Open a Pull Request against `main` after testing the changes.
 
 ---
 
-## Production Status
+## Project Structure
 
-| Component | Status |
-|---|---|
-| Azure VM | Running |
-| K3s Cluster | Running |
-| Kubernetes Backend | Running |
-| Traefik | Running |
-| HTTPS | Working |
-| REST API | Working |
-| CORS | Working |
-| Socket.IO | Working |
-| WSS | Working |
-| JWT Socket Authentication | Working |
-| E2EE Messaging | Working |
-| MongoDB Atlas | Integrated |
-| Cloudinary | Integrated |
-
-Production health check:
-
+```text
+server/
+├── infra/
+│   └── terraform/
+├── k8s/
+│   ├── deployment.yaml
+│   └── service.yaml
+├── controllers/
+├── middleware/
+├── models/
+├── routes/
+├── utils/
+├── Dockerfile
+├── .dockerignore
+├── .gitignore
+├── server.js
+└── package.json
 ```
-https://circlechat-20-197-24-9.sslip.io/ping
-```
-
----
-
-## Future Infrastructure Improvements
-
-The current infrastructure is deployed and production-tested.
-
-Potential future improvements include:
-
-- Kubernetes readiness probes
-- Kubernetes liveness probes
-- CPU and memory resource requests/limits
-- Production monitoring
-- Centralized logging
-- Automated database backups
-- More restrictive network security rules
-- Deployment rollback mechanisms
-- Immutable container image tags
-- Infrastructure monitoring and alerting
 
 ---
 

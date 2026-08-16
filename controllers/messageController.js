@@ -3,7 +3,7 @@ import Message from "../models/Message.js"
 import User from "../models/User.js"
 import { userSocketMap,io } from "../server.js"
 import cloudinary from "../lib/cloudinary.js"
-import { Readable } from "stream"
+import {Readable} from "stream"
 
 const uploadRawBuffer = (buffer) => {
     return new Promise((resolve, reject) => {
@@ -27,7 +27,7 @@ export const getUsersForSidebar = async (req,res)=>{
         }
 
         const filteredUsers = await User.find(userQuery)
-            .select("-password")
+            .select("fullName profilePic bio publicKey")
             .sort({ _id: 1 })
             .limit(limit);
 
@@ -89,7 +89,6 @@ export const getMessages = async(req,res) =>{
     }
 }
 
-//Marking messages as seen
 export const markMessageSeen = async(req,res)=>{
     try {
         const {id} = req.params
@@ -107,8 +106,7 @@ export const markMessageSeen = async(req,res)=>{
     }
 }
 
-//sending message
- export const sendMessage = async(req,res)=>{
+export const sendMessage = async(req,res)=>{
     try {
         const {text,nonce,image} = req.body
         const receiverId = req.params.id;

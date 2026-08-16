@@ -5,7 +5,6 @@ import bcrypt from "bcryptjs"
 import cloudinary from "../lib/cloudinary.js";
 import 'dotenv/config'
 
-
 export const signup =  async (req,res)=>{
     const {fullName,email,password,bio,publicKey,encryptedPrivateKey,salt,nonce} = req.body ;
 
@@ -40,7 +39,6 @@ export const signup =  async (req,res)=>{
     }
     
 }
-
 
 export const login = async (req,res)=>{
     try {
@@ -91,7 +89,6 @@ export const updatePublicKey = async (req,res) =>{
         return res.json({success:false,message:"failed to update user's public key"+error.message})
     }
 }
-
 
 export const getPublicKey = async(req,res)=>{
     try{

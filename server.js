@@ -37,9 +37,8 @@ io.use((socket, next) => {
 
 export const userSocketMap ={}
 
-
 io.on("connection",(socket)=>{
-    
+   
     const userId = socket.userId
 
     if(userId) userSocketMap[userId] = socket.id

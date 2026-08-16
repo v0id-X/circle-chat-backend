@@ -1,13 +1,10 @@
 import User from "../models/User.js"
 import jwt from "jsonwebtoken"
 
-
-//Route Protection
 export const protectRoute = async (req, res, next) => {
     try {
         const token = req.headers.token;
 
-        // Stop immediately if there is no token
         if (!token) {
             return res.status(401).json({ 
                 success: false, 
@@ -15,7 +12,6 @@ export const protectRoute = async (req, res, next) => {
             });
         }
 
-        //Now it is safe to verify, because we know the token exists
         const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
 
         const user = await User.findById(decodedToken.uid).select("-password");
