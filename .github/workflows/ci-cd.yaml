@@ -8,9 +8,12 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 env:
   IMAGE_NAME: ghcr.io/v0id-x/circle-chat-backend
+  AZURE_WEBAPP_NAME: circlechat-backend
+  AZURE_RESOURCE_GROUP: RG-CIRCLECHAT-K3S
 
 jobs:
   build-and-push:
@@ -43,28 +46,21 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
 
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
-      - name: Configure SSH
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/circlechat-vm-key
-          chmod 600 ~/.ssh/circlechat-vm-key
-          ssh-keyscan -T 10 -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Verify SSH
-        run: |
-          ssh \
-            -i ~/.ssh/circlechat-vm-key \
-            -o StrictHostKeyChecking=no \
-            -o ConnectTimeout=10 \
-            "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" \
-            "echo SSH connection successful"
-
-      - name: Deploy to Kubernetes
-        run: |
-          ssh \
-            -i ~/.ssh/circlechat-vm-key \
-            -o StrictHostKeyChecking=no \
-            -o ConnectTimeout=10 \
-            "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" \
-            "sudo kubectl set image deployment/circlechat-backend backend=$IMAGE_NAME:${{ github.sha }} && sudo kubectl rollout status deployment/circlechat-backend --timeout=180s"
+      - name: Deploy container to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          resource-group-name: ${{ env.AZURE_RESOURCE_GROUP }}
+          images: ${{ env.IMAGE_NAME }}:${{ github.sha }}
